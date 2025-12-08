@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'oauth2-pkce-demo'
+
+scrape_configs:
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+
+  - job_name: 'authserver'
+    static_configs:
+      - targets: ['otel-collector:8889']
+        labels:
+          service: 'authorization-server'
+          environment: 'development'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # debugging metrics
+  - job_name: 'otel-collector-internal'
+    static_configs:
+      - targets: ['otel-collector:8888']
+

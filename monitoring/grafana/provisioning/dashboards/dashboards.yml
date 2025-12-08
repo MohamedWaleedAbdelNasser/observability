@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: 'OAuth2 AuthServer'
+    orgId: 1
+    folder: 'OAuth2'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+
