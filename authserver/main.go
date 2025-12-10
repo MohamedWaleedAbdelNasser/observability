@@ -64,6 +64,30 @@ func generateAuthCode() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
+func authError(ctx context.Context, w http.ResponseWriter, clientID string, condition bool, logMsg, httpMsg string) bool {
+	if !condition {
+		return false
+	}
+	log.Printf("[AuthServer] ERROR: %s", logMsg)
+	if telemetry.AuthorizationRequests != nil {
+		telemetry.RecordAuthorizationRequest(ctx, clientID, false)
+	}
+	http.Error(w, httpMsg, http.StatusBadRequest)
+	return true
+}
+
+func tokenError(ctx context.Context, w http.ResponseWriter, condition bool, logMsg, httpMsg, errorType string, statusCode int) bool {
+	if !condition {
+		return false
+	}
+	log.Printf("[AuthServer] ERROR: %s", logMsg)
+	if telemetry.TokenExchanges != nil {
+		telemetry.RecordTokenExchange(ctx, false, errorType)
+	}
+	http.Error(w, httpMsg, statusCode)
+	return true
+}
+
 func generateSessionID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
@@ -286,48 +310,19 @@ func handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	log.Printf("  - code_challenge_method: %s", codeChallengeMethod)
 	log.Printf("  - state: %s", state)
 
-	if responseType != "code" {
-		log.Println("[AuthServer] ERROR: Invalid response_type")
-		if telemetry.AuthorizationRequests != nil {
-			telemetry.RecordAuthorizationRequest(ctx, clientID, false)
-		}
-		http.Error(w, "Invalid response_type", http.StatusBadRequest)
+	if authError(ctx, w, clientID, responseType != "code", "Invalid response_type", "Invalid response_type") {
 		return
 	}
-
-	if clientID == "" {
-		log.Println("[AuthServer] ERROR: Missing client_id")
-		if telemetry.AuthorizationRequests != nil {
-			telemetry.RecordAuthorizationRequest(ctx, clientID, false)
-		}
-		http.Error(w, "Missing client_id", http.StatusBadRequest)
+	if authError(ctx, w, clientID, clientID == "", "Missing client_id", "Missing client_id") {
 		return
 	}
-
-	if redirectURI == "" {
-		log.Println("[AuthServer] ERROR: Missing redirect_uri")
-		if telemetry.AuthorizationRequests != nil {
-			telemetry.RecordAuthorizationRequest(ctx, clientID, false)
-		}
-		http.Error(w, "Missing redirect_uri", http.StatusBadRequest)
+	if authError(ctx, w, clientID, redirectURI == "", "Missing redirect_uri", "Missing redirect_uri") {
 		return
 	}
-
-	if codeChallenge == "" {
-		log.Println("[AuthServer] ERROR: Missing code_challenge")
-		if telemetry.AuthorizationRequests != nil {
-			telemetry.RecordAuthorizationRequest(ctx, clientID, false)
-		}
-		http.Error(w, "Missing code_challenge (PKCE required)", http.StatusBadRequest)
+	if authError(ctx, w, clientID, codeChallenge == "", "Missing code_challenge", "Missing code_challenge (PKCE required)") {
 		return
 	}
-
-	if codeChallengeMethod != "S256" {
-		log.Println("[AuthServer] ERROR: Invalid code_challenge_method, must be S256")
-		if telemetry.AuthorizationRequests != nil {
-			telemetry.RecordAuthorizationRequest(ctx, clientID, false)
-		}
-		http.Error(w, "code_challenge_method must be S256", http.StatusBadRequest)
+	if authError(ctx, w, clientID, codeChallengeMethod != "S256", "Invalid code_challenge_method, must be S256", "code_challenge_method must be S256") {
 		return
 	}
 
@@ -351,7 +346,6 @@ func handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[AuthServer]  Created session: %s", sessionID[:20]+"...")
 	log.Println("[AuthServer] Waiting for user consent...")
 
-	// Record successful authorization request
 	if telemetry.AuthorizationRequests != nil {
 		telemetry.RecordAuthorizationRequest(ctx, clientID, true)
 	}
@@ -399,7 +393,6 @@ func handleConsent(w http.ResponseWriter, r *http.Request) {
 	delete(pendingAuths, sessionID)
 	pendingMutex.Unlock()
 
-	// Record consent decision
 	if telemetry.ConsentDecisions != nil {
 		telemetry.RecordConsentDecision(ctx, action, pending.ClientID)
 	}
@@ -448,12 +441,7 @@ func handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := r.ParseForm()
-	if err != nil {
-		log.Printf("[AuthServer] ERROR: Failed to parse form: %v", err)
-		if telemetry.TokenExchanges != nil {
-			telemetry.RecordTokenExchange(ctx, false, "parse_error")
-		}
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	if tokenError(ctx, w, err != nil, fmt.Sprintf("Failed to parse form: %v", err), "Invalid request", "parse_error", http.StatusBadRequest) {
 		return
 	}
 
@@ -470,12 +458,7 @@ func handleToken(w http.ResponseWriter, r *http.Request) {
 	log.Printf("  - redirect_uri: %s", redirectURI)
 	log.Printf("  - code_verifier: %s", codeVerifier[:20]+"...")
 
-	if grantType != "authorization_code" {
-		log.Println("[AuthServer] ERROR: Invalid grant_type")
-		if telemetry.TokenExchanges != nil {
-			telemetry.RecordTokenExchange(ctx, false, "invalid_grant_type")
-		}
-		http.Error(w, "Invalid grant_type", http.StatusBadRequest)
+	if tokenError(ctx, w, grantType != "authorization_code", "Invalid grant_type", "Invalid grant_type", "invalid_grant_type", http.StatusBadRequest) {
 		return
 	}
 
@@ -483,32 +466,16 @@ func handleToken(w http.ResponseWriter, r *http.Request) {
 	authData, exists := authCodes[code]
 	authMutex.RUnlock()
 
-	if !exists {
-		log.Println("[AuthServer] ERROR: Invalid or expired authorization code")
-		if telemetry.TokenExchanges != nil {
-			telemetry.RecordTokenExchange(ctx, false, "invalid_code")
-		}
-		http.Error(w, "Invalid authorization code", http.StatusBadRequest)
+	if tokenError(ctx, w, !exists, "Invalid or expired authorization code", "Invalid authorization code", "invalid_code", http.StatusBadRequest) {
 		return
 	}
 
 	log.Println("[AuthServer]  Authorization code found")
 
-	if authData.ClientID != clientID {
-		log.Println("[AuthServer] ERROR: client_id mismatch")
-		if telemetry.TokenExchanges != nil {
-			telemetry.RecordTokenExchange(ctx, false, "client_id_mismatch")
-		}
-		http.Error(w, "Invalid client_id", http.StatusBadRequest)
+	if tokenError(ctx, w, authData.ClientID != clientID, "client_id mismatch", "Invalid client_id", "client_id_mismatch", http.StatusBadRequest) {
 		return
 	}
-
-	if authData.RedirectURI != redirectURI {
-		log.Println("[AuthServer] ERROR: redirect_uri mismatch")
-		if telemetry.TokenExchanges != nil {
-			telemetry.RecordTokenExchange(ctx, false, "redirect_uri_mismatch")
-		}
-		http.Error(w, "Invalid redirect_uri", http.StatusBadRequest)
+	if tokenError(ctx, w, authData.RedirectURI != redirectURI, "redirect_uri mismatch", "Invalid redirect_uri", "redirect_uri_mismatch", http.StatusBadRequest) {
 		return
 	}
 
@@ -541,12 +508,7 @@ func handleToken(w http.ResponseWriter, r *http.Request) {
 	authMutex.Unlock()
 
 	accessToken, err := generateAccessToken(authData.ClientID, authData.Scopes)
-	if err != nil {
-		log.Printf("[AuthServer] ERROR: Failed to generate access token: %v", err)
-		if telemetry.TokenExchanges != nil {
-			telemetry.RecordTokenExchange(ctx, false, "token_generation_failed")
-		}
-		http.Error(w, "Token generation failed", http.StatusInternalServerError)
+	if tokenError(ctx, w, err != nil, fmt.Sprintf("Failed to generate access token: %v", err), "Token generation failed", "token_generation_failed", http.StatusInternalServerError) {
 		return
 	}
 
@@ -554,7 +516,6 @@ func handleToken(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[AuthServer]  Token preview: %s", accessToken[:50]+"...")
 	log.Printf("[AuthServer]  Scopes: %v", authData.Scopes)
 
-	// Record successful token exchange
 	if telemetry.TokenExchanges != nil {
 		telemetry.RecordTokenExchange(ctx, true, "")
 	}
