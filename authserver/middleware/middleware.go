@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"pkce1/authserver/telemetry"
+	"pkce1/telemetry"
 )
 
 type responseWriter struct {

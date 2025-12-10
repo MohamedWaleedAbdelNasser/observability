@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"pkce1/authserver/middleware"
-	"pkce1/authserver/telemetry"
+	"pkce1/telemetry"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
