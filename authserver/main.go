@@ -544,7 +544,10 @@ func main() {
 
 	ctx := context.Background()
 
-	otlpEndpoint := "localhost:4317"
+	otlpEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if otlpEndpoint == "" {
+		otlpEndpoint = "localhost:4317"
+	}
 
 	cfg := telemetry.Config{
 		ServiceName:    "authserver",

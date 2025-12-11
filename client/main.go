@@ -8,26 +8,38 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/gorilla/mux"
 	"golang.org/x/oauth2"
 )
 
-const (
-	clientID          = "my-oauth2-client"
-	resourceServerURL = "http://localhost:8082"
-	redirectURI       = "http://localhost:8080/callback"
+var (
+	clientID              = "my-oauth2-client"
+	resourceServerURL     = getEnv("RESOURCE_SERVER_URL", "http://localhost:8082")
+	redirectURI           = getEnv("REDIRECT_URI", "http://localhost:8080/callback")
+	authServerExternalURL = getEnv("AUTH_SERVER_EXTERNAL_URL", "http://localhost:8081")
+	authServerInternalURL = getEnv("AUTH_SERVER_INTERNAL_URL", "http://localhost:8081")
 )
 
-var oauthConfig = &oauth2.Config{
-	ClientID: clientID,
-	Endpoint: oauth2.Endpoint{
-		AuthURL:  "http://localhost:8081/authorize",
-		TokenURL: "http://localhost:8081/token",
-	},
-	RedirectURL: redirectURI,
-	Scopes:      []string{"read", "write", "delete"},
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getOAuthConfig() *oauth2.Config {
+	return &oauth2.Config{
+		ClientID: clientID,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  authServerExternalURL + "/authorize",
+			TokenURL: authServerInternalURL + "/token",
+		},
+		RedirectURL: redirectURI,
+		Scopes:      []string{"read", "write", "delete"},
+	}
 }
 
 var (
@@ -79,7 +91,7 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 
 	log.Println("[Client] STEP 2: Building authorization request using oauth2.Config.AuthCodeURL()...")
 
-	authURL := oauthConfig.AuthCodeURL(state, oauth2.S256ChallengeOption(codeVerifier))
+	authURL := getOAuthConfig().AuthCodeURL(state, oauth2.S256ChallengeOption(codeVerifier))
 
 	log.Printf("[Client]  Authorization URL generated")
 	log.Printf("[Client]  oauth2.S256ChallengeOption() automatically added PKCE challenge")
@@ -133,6 +145,7 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[Client] Code verifier being sent: %s", pkceData.Verifier[:20]+"...")
 
 	ctx := context.Background()
+	oauthConfig := getOAuthConfig()
 	token, err := oauthConfig.Exchange(ctx, code, oauth2.VerifierOption(pkceData.Verifier))
 	if err != nil {
 		log.Printf("[Client] ERROR: Failed to exchange code: %v", err)

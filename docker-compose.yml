@@ -1,4 +1,56 @@
 services:
+  authserver:
+    build:
+      context: .
+      dockerfile: authserver/Dockerfile
+    container_name: authserver
+    ports:
+      - "8081:8081"
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-key-change-me}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - monitoring
+    depends_on:
+      - otel-collector
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    container_name: client
+    ports:
+      - "8080:8080"
+    environment:
+      - AUTH_SERVER_EXTERNAL_URL=http://localhost:8081
+      - AUTH_SERVER_INTERNAL_URL=http://authserver:8081
+      - RESOURCE_SERVER_URL=http://resourceserver:8082
+      - REDIRECT_URI=http://localhost:8080/callback
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - monitoring
+    depends_on:
+      - authserver
+      - resourceserver
+
+  resourceserver:
+    build:
+      context: .
+      dockerfile: resourceserver/Dockerfile
+    container_name: resourceserver
+    ports:
+      - "8082:8082"
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-key-change-me}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - monitoring
+
+  # ===== Monitoring Services =====
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
     container_name: otel-collector
@@ -14,7 +66,6 @@ services:
     restart: unless-stopped
     networks:
       - monitoring
-
 
   prometheus:
     image: prom/prometheus:latest
@@ -34,7 +85,6 @@ services:
       - monitoring
     depends_on:
       - otel-collector
-
 
   grafana:
     image: grafana/grafana:latest
@@ -61,4 +111,3 @@ networks:
 volumes:
   prometheus_data:
   grafana_data:
-
